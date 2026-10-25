@@ -211,7 +211,7 @@ Live CPSA PDFs are landscape and **multi-column**. Default left-to-right text ex
 
 Every printed PDF column is stored on `practitioners` for that listing. Alphabetical has no address or fax; retired / obituaries have name and city only; ProfCorp is a corporation name only.
 
-Phone and fax from the listings are copied onto `contacts.phone` / `contacts.fax` (specialists / non-specialists win over alphabetical when both exist). Email stays null until enrichment exists.
+Phone and fax from the listings are copied onto `contacts.phone` / `contacts.fax` (specialists / non-specialists win over alphabetical when both exist). Email stays null until enrichment exists. The PHONE column is not labeled personal or mobile. `advisor_leads.phone_shared_count` is how many contacts publish that same number. More than one contact means `phone_kind = practice`. One contact means `unshared`, which is still the published listing number, not a confirmed personal phone.
 
 Specialty:
 
@@ -443,7 +443,24 @@ Unique `(segment_id, organization_id, contact_id)`.
 | `git_sha` | text null | |
 | `error` | text null | |
 
-### 8.7 What is not a table in v1
+### 8.7 `lead_reviews`
+
+Advisor disposition of one lead. This is not outreach and it does not authorize a send.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | uuid pk | |
+| `segment_id` | text fk | |
+| `org_key` | text | Same deterministic key as `organizations.org_key` |
+| `contact_key` | text | Same deterministic key as `contacts.contact_key` |
+| `verdict` | text | `worth_call` \| `hospital_employee` \| `wrong_size` \| `not_buyer` |
+| `note` | text null | Why |
+| `reviewed_by` | text | `advisor`, or `pipeline` for a rule applied to the loaded list |
+| `created_at` / `updated_at` | timestamptz | |
+
+Unique `(segment_id, org_key, contact_key)`. A CPSA reload must not delete these rows.
+
+### 8.8 What is not a table in v1
 
 - No `enrichment_jobs` queue until Apollo is authorized
 - No outreach / CASL consent tables
@@ -591,7 +608,7 @@ CPSA load is **replace, then insert**, so a parser fix does not leave glued name
 - `segment_members`: `(segment_id, organization_id, contact_id)` only when both sides exist
 - Refresh `fit_score`, `score_breakdown`, `last_seen_at` on each successful load
 
-This wipe is source-wide for CPSA, not “members that vanished stay forever.” Dental rows are untouched because they use a different `source` / `license_college`.
+This wipe is source-wide for CPSA, not “members that vanished stay forever.” Dental rows are untouched because they use a different `source` / `license_college`. `lead_reviews` is not deleted. Marks are stored on `(segment_id, org_key, contact_key)`, which stay stable when the uuid keys are reinserted.
 
 ### 10.5 Idempotency
 
@@ -621,16 +638,26 @@ Not a custom app.
 
 Inspect locally in Supabase Studio (http://127.0.0.1:54323 after `npx supabase start`). For the pilot advisor list, connect Metabase or Retool (or equivalent) to Postgres with a read-only role.
 
-Default saved question / app:
+Default saved question is the `advisor_leads` view in `pipeline/load/schema.sql`. Studio can open it after a load. Metabase or Retool can sit on the same view later.
 
-- From `segment_members` where `is_primary_contact`
-- Join organization and contact
-- Columns: name, credentials, practice, city, phone, fax, licensee_count, practice_type, fit_score, specialty, segment
-- Filters: `segment_id`, `city`, `sector`, `fit_score >= n`, `practice_type`
-- Sort: `fit_score` desc
-- Export: CSV
+The view keeps two kinds of primary contact:
 
-That is the advisor-facing lead list for the scoping phase.
+- `group_practice`: `practice_type = group` and `fit_score >= 80`. On the 2026-10-24 CPSA load that is the 2–15 licensee band (scores 80, 88, and 92). Score 66 is 16 or more licensees and is left in `segment_members` only.
+- `professional_corporation`: a corporation whose unique owner match left `practice_type = solo` and `title = Owner`. Those rows are the buyer list. Hiding every solo would drop them, because a matched corporation usually has one attached physician.
+
+Hospitals, unmatched corporations (`practice_type = unknown`), and street-address solos stay in the base tables. Columns include name, credentials, title, specialty, phone, fax, practice, city, licensee_count, practice_type, fit_score, and `lead_kind`. Sort `fit_score` desc. Filter further on `segment_id`, `city`, or `lead_kind` at query time.
+
+`contacts.title = Owner` is person-level. A physician who matched a corporation can show Owner on their street-address membership, while that membership’s score still uses the credential title. The corporation row is where the owner points were applied.
+
+Corporation organizations have no city in the ProfCorp PDF. `advisor_leads.city` uses the organization city, and otherwise the city baked into `contact_key`.
+
+`advisor_review_queue` is `advisor_leads` plus `lead_reviews`. A null `verdict` means nobody has marked that row. The first pipeline pass marked two objective cases only: a practice postal code outside Alberta (`not_buyer`), and an address that names a hospital or cancer centre (`hospital_employee`). `worth_call` and `wrong_size` stay empty until an advisor marks them.
+
+The advisor does not get that queue. `advisor_shortlist` is the 20 highest `fit_score` rows in Edmonton that are still unreviewed or marked `worth_call`. Each row shows whether the listing phone is shared (`practice`) or published by one physician (`unshared`). Other cities stay out until the pilot expands. Score v1 puts an owner-matched practice (92) ahead of a larger clinic (88). A `wrong_size`, `hospital_employee`, or `not_buyer` mark drops that row and the next Edmonton score fills the slot.
+
+`python -m pipeline.dashboard` serves the shortlist at http://127.0.0.1:8765. The process binds to loopback only.
+
+`web/` is a Django site for the same shortlist. Every lead page requires a sign-in. Vercel runs it from this repo with functions pinned to Montréal (`yul1` in `vercel.json`). `DATABASE_URL` is a Supabase Postgres instance in Canada (Central), using the session connection string on port 5432. On that host set `DJANGO_DEBUG=0` and `DJANGO_SECRET_KEY`. `DJANGO_ALLOWED_HOSTS` can stay unset for `*.vercel.app`. GitHub Pages is public static hosting and is not a place for this list.
 
 ---
 
@@ -666,11 +693,15 @@ pipeline/
   load/
     schema.sql
     upsert.py                    # replace-then-insert for CPSA
+  dashboard.py                   # loopback review page; not for public hosting
+  dashboard.html
   enrichment/
     stub.py                      # always blocked in v1
   fixtures/
     cpsa/listings/               # synthetic text/PDF slices, all six listings
     cdsa/                        # empty until a later dentist task
+web/                             # Django site, sign-in required, same shortlist
+vercel.json                      # Vercel functions pinned to Montréal (yul1)
 tests/
   test_identity.py
   test_score.py
@@ -739,13 +770,16 @@ Done for `alberta-medical-benefits`:
 4. Transform: column-aware PDF parse, practitioners staging, specialist/non-specialist address promotion, identity, ProfCorp unique-initial match, `licensee_count`, score v1
 5. Load replace-then-insert + `etl_runs`
 6. Tests for identity, size bands, hospital penalty, ProfCorp matching, listing isolation, gated dental extract
+7. `advisor_leads` view: group practices with `fit_score >= 80`, plus matched professional-corporation owners
+8. `lead_reviews` and `advisor_review_queue`. Pipeline marks for out-of-province postal codes and hospital or cancer-centre addresses. Advisor marks are still open.
+9. Local review dashboard on 127.0.0.1, showing `advisor_shortlist` (best 20 in Edmonton). The lead list stays off GitHub Pages.
 
 Still later:
 
-7. Saved BI question / Retool on `segment_members` (local Studio is enough to inspect today)
-8. Optional GitHub Action schedule for CPSA
-9. CDSA ToS review and dentist ingest
-10. Apollo / enrichment: only after a reseller agreement, as a separate change
+10. Metabase or Retool on `advisor_review_queue` (local Studio can open the view today)
+11. Optional GitHub Action schedule for CPSA
+12. CDSA ToS review and dentist ingest
+13. Apollo / enrichment: only after a reseller agreement, as a separate change
 
 ---
 

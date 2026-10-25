@@ -1,4 +1,7 @@
+import inspect
+
 from pipeline.config import load_segment
+from pipeline.load.upsert import replace_source_rows
 from pipeline.enrichment.stub import enrich_contact
 from pipeline.extract.cpsa_listings import CPSA_LISTINGS
 from pipeline.extract.runner import LegalGateError, run_extract, write_fixture_extract
@@ -22,6 +25,23 @@ def test_schema_defines_v1_tables():
     assert "email text" in sql
     assert "fax text" in sql
     assert "enrichment_status" in sql
+    assert sql.count("CREATE OR REPLACE VIEW advisor_leads") == 1
+    assert "o.practice_type = 'group'" in sql
+    assert "m.fit_score >= 80" in sql
+    assert "professional_corporation" in sql
+    assert "lead_kind" in sql
+    assert "CREATE TABLE IF NOT EXISTS lead_reviews" in sql
+    assert "UNIQUE (segment_id, org_key, contact_key)" in sql
+    assert "CREATE OR REPLACE VIEW advisor_review_queue" in sql
+    assert "CREATE OR REPLACE VIEW advisor_shortlist" in sql
+    assert "city = 'Edmonton'" in sql
+    assert "phone_shared_count" in sql
+    assert "phone_kind" in sql
+    assert "LIMIT 20" in sql
+
+
+def test_cpsa_reload_keeps_lead_reviews():
+    assert "lead_reviews" not in inspect.getsource(replace_source_rows)
 
 
 def test_cpsa_live_extract_is_allowed():

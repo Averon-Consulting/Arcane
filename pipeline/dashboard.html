@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Alberta medical leads</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #1c1915;
+      --muted: #5e584f;
+      --line: #e4ddd2;
+      --paper: #f7f4ef;
+      --card: #fffdf9;
+      --green: #1f4b3a;
+      --green-soft: #e7f0eb;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 15px/1.4 "Iowan Old Style", Palatino, Georgia, serif;
+      color: var(--ink);
+      background: var(--paper);
+    }
+    header, main { max-width: 1180px; margin: 0 auto; padding: 24px 20px; }
+    header { padding-bottom: 0; }
+    h1 { font-size: 28px; font-weight: 600; margin: 0 0 6px; }
+    p.lede { margin: 0; color: var(--muted); max-width: 62ch; }
+    .stats { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0; }
+    button.stat, button.page, button.apply {
+      font: 13px/1.2 ui-sans-serif, system-ui, sans-serif;
+      border: 1px solid var(--line);
+      background: var(--card);
+      color: var(--ink);
+      border-radius: 999px;
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+    button.stat strong { font-weight: 650; }
+    button.stat[aria-pressed="true"], button.apply {
+      background: var(--green);
+      color: white;
+      border-color: var(--green);
+    }
+    .filters {
+      display: flex; flex-wrap: wrap; gap: 8px; align-items: end;
+      margin-bottom: 12px;
+    }
+    label { display: flex; flex-direction: column; gap: 4px; font: 12px/1.2 ui-sans-serif, system-ui, sans-serif; color: var(--muted); }
+    input, select {
+      font: 14px/1.2 ui-sans-serif, system-ui, sans-serif;
+      color: var(--ink);
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+      min-width: 0;
+    }
+    input[type="search"] { width: 240px; }
+    .meta { color: var(--muted); font: 13px/1.3 ui-sans-serif, system-ui, sans-serif; margin: 0 0 8px; }
+    table { width: 100%; border-collapse: collapse; background: var(--card); }
+    th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { font: 12px/1.2 ui-sans-serif, system-ui, sans-serif; color: var(--muted); font-weight: 600; }
+    td.name { font-weight: 600; }
+    td .sub { display: block; color: var(--muted); font-weight: 400; font-size: 13px; }
+    a { color: var(--green); }
+    .pager { display: flex; gap: 8px; align-items: center; margin: 14px 0 28px; }
+    .error { background: #fde8e4; border: 1px solid #e7b2a8; padding: 12px 14px; border-radius: 8px; }
+    select.verdict { max-width: 160px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Alberta medical leads</h1>
+    <p class="lede">Edmonton only. Twenty leads still in play. Marking a row as wrong size, hospital, or not the buyer removes it and brings in the next Edmonton lead. This page is on your machine only.</p>
+    <div class="stats" id="stats"></div>
+  </header>
+  <main>
+    <form class="filters" id="filters">
+      <label>Search<input type="search" name="q" placeholder="Name, clinic, or city"></label>
+      <label>City<select name="city"><option value="">All cities</option></select></label>
+      <label>Kind
+        <select name="lead_kind">
+          <option value="">All kinds</option>
+          <option value="group_practice">Group practice</option>
+          <option value="professional_corporation">Professional corporation</option>
+        </select>
+      </label>
+      <label>Specialty<select name="specialty"><option value="">All specialties</option></select></label>
+      <label>Mark
+        <select name="verdict">
+          <option value="">Any mark</option>
+          <option value="unreviewed">Unreviewed</option>
+          <option value="worth_call">Worth a call</option>
+          <option value="wrong_size">Wrong size</option>
+          <option value="hospital_employee">Hospital employee</option>
+          <option value="not_buyer">Not the buyer</option>
+        </select>
+      </label>
+      <button class="apply" type="submit">Apply</button>
+    </form>
+    <p class="meta" id="meta"></p>
+    <div id="table"></div>
+    <div class="pager">
+      <button class="page" type="button" id="prev">Previous</button>
+      <span class="meta" id="page"></span>
+      <button class="page" type="button" id="next">Next</button>
+    </div>
+  </main>
+  <script>
+    const form = document.getElementById("filters");
+    const stats = document.getElementById("stats");
+    const table = document.getElementById("table");
+    const meta = document.getElementById("meta");
+    const pageLabel = document.getElementById("page");
+    let offset = 0;
+    const limit = 50;
+    const verdicts = [
+      ["", "Unreviewed"],
+      ["worth_call", "Worth a call"],
+      ["wrong_size", "Wrong size"],
+      ["hospital_employee", "Hospital employee"],
+      ["not_buyer", "Not the buyer"],
+    ];
+
+    function params() {
+      const data = new FormData(form);
+      const query = new URLSearchParams();
+      for (const [key, value] of data.entries()) {
+        if (String(value).trim()) query.set(key, String(value).trim());
+      }
+      query.set("limit", String(limit));
+      query.set("offset", String(offset));
+      return query;
+    }
+
+    function cell(text) {
+      const td = document.createElement("td");
+      td.textContent = text || "";
+      return td;
+    }
+
+    function renderStats(summary) {
+      const items = [
+        ["", "All", summary.total],
+        ["unreviewed", "Unreviewed", summary.unreviewed],
+        ["worth_call", "Worth a call", summary.worth_call],
+        ["wrong_size", "Wrong size", summary.wrong_size],
+        ["hospital_employee", "Hospital", summary.hospital_employee],
+        ["not_buyer", "Not the buyer", summary.not_buyer],
+      ];
+      stats.replaceChildren();
+      const current = form.verdict.value;
+      for (const [value, label, count] of items) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "stat";
+        button.setAttribute("aria-pressed", String(current === value));
+        const name = document.createElement("span");
+        name.textContent = label + " ";
+        const strong = document.createElement("strong");
+        strong.textContent = String(count);
+        button.append(name, strong);
+        button.addEventListener("click", () => {
+          form.verdict.value = value;
+          offset = 0;
+          load();
+        });
+        stats.append(button);
+      }
+    }
+
+    function renderTable(payload) {
+      const shownFrom = payload.total === 0 ? 0 : payload.offset + 1;
+      const shownTo = Math.min(payload.offset + payload.rows.length, payload.total);
+      meta.textContent = shownFrom + "–" + shownTo + " of " + payload.total;
+      pageLabel.textContent = "Page " + (Math.floor(payload.offset / limit) + 1);
+      document.getElementById("prev").disabled = payload.offset === 0;
+      document.getElementById("next").disabled = payload.offset + payload.rows.length >= payload.total;
+
+      const el = document.createElement("table");
+      const head = document.createElement("tr");
+      for (const label of ["Name", "Practice", "City", "Specialty", "Physicians", "Phone", "Mark"]) {
+        const th = document.createElement("th");
+        th.textContent = label;
+        head.append(th);
+      }
+      const thead = document.createElement("thead");
+      thead.append(head);
+      const tbody = document.createElement("tbody");
+      for (const row of payload.rows) {
+        const tr = document.createElement("tr");
+        const name = document.createElement("td");
+        name.className = "name";
+        name.textContent = row.full_name;
+        const kind = document.createElement("span");
+        kind.className = "sub";
+        kind.textContent = row.lead_kind === "professional_corporation" ? "Professional corporation" : "Group practice";
+        name.append(kind);
+
+        const practice = document.createElement("td");
+        practice.textContent = row.practice;
+        if (row.address_line1 && row.address_line1 !== row.practice) {
+          const address = document.createElement("span");
+          address.className = "sub";
+          address.textContent = row.address_line1;
+          practice.append(address);
+        }
+
+        const phone = document.createElement("td");
+        if (row.phone) {
+          const link = document.createElement("a");
+          link.href = "tel:" + row.phone;
+          link.textContent = row.phone;
+          phone.append(link);
+        }
+        const phoneNote = document.createElement("span");
+        phoneNote.className = "sub";
+        if (row.phone_kind === "practice") {
+          phoneNote.textContent = "Practice line · " + row.phone_shared_count + " physicians";
+        } else if (row.phone_kind === "unshared") {
+          phoneNote.textContent = "One physician lists this number";
+        } else {
+          phoneNote.textContent = "No number on the listing";
+        }
+        phone.append(phoneNote);
+
+        const select = document.createElement("select");
+        select.className = "verdict";
+        for (const [value, label] of verdicts) {
+          const option = document.createElement("option");
+          option.value = value;
+          option.textContent = label;
+          if ((row.verdict || "") === value) option.selected = true;
+          select.append(option);
+        }
+        select.addEventListener("change", () => save(row, select));
+        const mark = document.createElement("td");
+        mark.append(select);
+
+        tr.append(
+          name,
+          practice,
+          cell(row.city),
+          cell(row.specialty),
+          cell(String(row.licensee_count ?? "")),
+          phone,
+          mark,
+        );
+        tbody.append(tr);
+      }
+      el.append(thead, tbody);
+      table.replaceChildren(el);
+    }
+
+    async function save(row, select) {
+      const verdict = select.value;
+      const body = JSON.stringify({
+        segment_id: row.segment_id,
+        org_key: row.org_key,
+        contact_key: row.contact_key,
+        verdict,
+      });
+      const response = await fetch("/api/reviews", {
+        method: verdict ? "POST" : "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body,
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        alert(error.error || "Could not save the mark");
+        return;
+      }
+      load();
+    }
+
+    function showError(error) {
+      table.replaceChildren();
+      const box = document.createElement("div");
+      box.className = "error";
+      box.textContent = error;
+      table.append(box);
+    }
+
+    async function load() {
+      const query = params();
+      try {
+        const [summary, payload] = await Promise.all([
+          fetch("/api/summary").then((response) => response.json()),
+          fetch("/api/leads?" + query.toString()).then((response) => response.json()),
+        ]);
+        if (summary.error) throw new Error(summary.error);
+        if (payload.error) throw new Error(payload.error);
+        renderStats(summary);
+        renderTable(payload);
+      } catch (error) {
+        showError(error.message || String(error));
+      }
+    }
+
+    async function loadOptions() {
+      const payload = await fetch("/api/options").then((response) => response.json());
+      for (const city of payload.cities || []) {
+        const option = document.createElement("option");
+        option.value = city;
+        option.textContent = city;
+        form.city.append(option);
+      }
+      for (const specialty of payload.specialties || []) {
+        const option = document.createElement("option");
+        option.value = specialty;
+        option.textContent = specialty;
+        form.specialty.append(option);
+      }
+    }
+
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      offset = 0;
+      load();
+    });
+    document.getElementById("prev").addEventListener("click", () => {
+      offset = Math.max(0, offset - limit);
+      load();
+    });
+    document.getElementById("next").addEventListener("click", () => {
+      offset += limit;
+      load();
+    });
+
+    loadOptions().then(load).catch((error) => showError(error.message || String(error)));
+  </script>
+</body>
+</html>

@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Alberta medical leads</title>
+  <style>
+    :root { color-scheme: light; }
+    body {
+      margin: 0;
+      font: 15px/1.4 Georgia, serif;
+      color: #1c1915;
+      background: #f7f4ef;
+    }
+    header, main { max-width: 1180px; margin: 0 auto; padding: 24px 20px; }
+    header { display: flex; justify-content: space-between; gap: 16px; align-items: end; padding-bottom: 0; }
+    h1 { font-size: 28px; margin: 0 0 6px; }
+    .lede { margin: 0; color: #5e584f; max-width: 68ch; }
+    form.out { margin: 0; }
+    button, .linkish {
+      font: 13px/1.2 ui-sans-serif, system-ui, sans-serif;
+      border: 1px solid #e4ddd2;
+      background: #fffdf9;
+      border-radius: 999px;
+      padding: 8px 12px;
+    }
+    button.save { background: #1f4b3a; color: white; border-color: #1f4b3a; }
+    table { width: 100%; border-collapse: collapse; background: #fffdf9; }
+    th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid #e4ddd2; vertical-align: top; }
+    th { font: 12px/1.2 ui-sans-serif, system-ui, sans-serif; color: #5e584f; }
+    td.name { font-weight: 600; }
+    .sub { display: block; color: #5e584f; font-weight: 400; font-size: 13px; }
+    a { color: #1f4b3a; }
+    select { font: 14px/1.2 ui-sans-serif, system-ui, sans-serif; max-width: 170px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Alberta medical leads</h1>
+      <p class="lede">Edmonton only. Twenty leads. The phone is the practice number from the College listing. This site requires a sign-in.</p>
+    </div>
+    <form class="out" method="post" action="{% url 'logout' %}">
+      {% csrf_token %}
+      <button type="submit">Sign out</button>
+    </form>
+  </header>
+  <main>
+    <p class="lede">{{ total }} lead{{ total|pluralize }}.</p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Practice</th>
+          <th>City</th>
+          <th>Specialty</th>
+          <th>Physicians</th>
+          <th>Phone</th>
+          <th>Mark</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td class="name">
+            {{ row.full_name }}
+            <span class="sub">
+              {% if row.lead_kind == "professional_corporation" %}Professional corporation{% else %}Group practice{% endif %}
+            </span>
+          </td>
+          <td>
+            {{ row.practice }}
+            {% if row.address_line1 and row.address_line1 != row.practice %}
+              <span class="sub">{{ row.address_line1 }}</span>
+            {% endif %}
+          </td>
+          <td>{{ row.city }}</td>
+          <td>{{ row.specialty }}</td>
+          <td>{{ row.licensee_count }}</td>
+          <td>
+            {% if row.phone %}<a href="tel:{{ row.phone }}">{{ row.phone }}</a>{% endif %}
+            {% if row.phone_kind == "practice" %}
+              <span class="sub">Practice line · {{ row.phone_shared_count }} physicians</span>
+            {% elif row.phone_kind == "unshared" %}
+              <span class="sub">One physician lists this number</span>
+            {% else %}
+              <span class="sub">No number on the listing</span>
+            {% endif %}
+          </td>
+          <td>
+            <form method="post" action="{% url 'review' %}">
+              {% csrf_token %}
+              <input type="hidden" name="segment_id" value="{{ row.segment_id }}">
+              <input type="hidden" name="org_key" value="{{ row.org_key }}">
+              <input type="hidden" name="contact_key" value="{{ row.contact_key }}">
+              <select name="verdict">
+                {% for value, label in verdict_choices %}
+                  <option value="{{ value }}" {% if row.verdict == value or not row.verdict and not value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+              <button class="save" type="submit">Save</button>
+            </form>
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="7">No leads are loaded.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </main>
+</body>
+</html>

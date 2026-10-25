@@ -32,7 +32,7 @@ The first start pulls Docker images and can take a few minutes. After that:
 - Postgres: `postgresql://postgres:postgres@127.0.0.1:54322/postgres`
 - Studio (table browser): http://127.0.0.1:54323
 
-Studio is empty until you run **load**. `npx supabase stop` shuts the containers down.
+Studio is empty until you run **load**. After a medical load, open `advisor_review_queue` (group practices with `fit_score >= 80`, plus matched professional-corporation owners, with any mark already stored). `npx supabase stop` shuts the containers down.
 
 `pytest` does not need Docker. Load does.
 
@@ -50,6 +50,22 @@ Omit `--run-id` to use the newest directory under `data/raw/alberta-medical-bene
 `--allow-fixtures` lands the checked-in synthetic slices instead of hitting the network.
 
 Dental is `tos_status: unchecked`. `--allow-fixtures` on `alberta-dental-benefits` is expected to fail until that task.
+
+Review the best 20 Edmonton leads in a local page. It listens on this machine only. Do not publish the lead list to GitHub Pages.
+
+```bash
+python -m pipeline.dashboard
+```
+
+Then open http://127.0.0.1:8765.
+
+The shareable site is this Django app on Vercel, built from the GitHub repo and pinned to Montréal. The database is a free Supabase project in Canada (Central). Sign-in stays on. In the Vercel project, set `DATABASE_URL` to that project's session connection string (port 5432, `sslmode=require`), plus `DJANGO_SECRET_KEY` and `DJANGO_DEBUG=0`. The local `npx supabase start` database is only on this machine.
+
+```bash
+python web/manage.py migrate
+python web/manage.py createsuperuser
+python web/manage.py runserver
+```
 
 ```bash
 pytest
